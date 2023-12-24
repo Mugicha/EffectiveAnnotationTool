@@ -25,8 +25,8 @@ class DrawingApp(QMainWindow):
         self.shape = 'Line'  # default shape
 
         # 直線を引くために必要な初期化処理
-        self.firstClickPoint = None
-        self.lastClickPoint = None
+        self.firstLineClickPoint = None
+        self.lastLineClickPoint = None
         self.currentMousePosition = None  # 現在のマウスの位置を格納する変数.
         self.drawingLine = False
 
@@ -39,6 +39,9 @@ class DrawingApp(QMainWindow):
         self.rectAngleDict = defaultdict(list)  # 複数の矩形を格納する辞書型変数.
         self.rectAngleID = 0
         self.currentEditingRectID = None  # 現在描画中のRectangleのID（rectAngleDictのkey）を格納する変数.
+        self.firstRectClickPoint = None  # 矩形を描画するための、左上座標を格納する変数
+        self.lastRectClickPoint = None  # 矩形を描画するための、右下座標を格納する座標
+        self.drawingRect = False
 
         # Dropdown for shape selection
         self.shapeComboBox = QComboBox(self)
@@ -96,24 +99,61 @@ class DrawingApp(QMainWindow):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
+
+            # 線描画時の処理.
             if self.shape == "Line":
-                if self.firstClickPoint is None:
-                    self.firstClickPoint = event.position().toPoint()
+
+                # 描画中の線がない場合.
+                if self.firstLineClickPoint is None:
+                    self.firstLineClickPoint = event.position().toPoint()
                     self.setMouseTracking(True)  # 点線の描画の為に、マウストラッキングを開始する
-                elif self.lastClickPoint is None:
-                    self.lastClickPoint = event.position().toPoint()
+
+                # 描画中の線がある場合.
+                elif self.lastLineClickPoint is None:
+                    self.lastLineClickPoint = event.position().toPoint()
                     self.setMouseTracking(False)  # 始点終点がセットされたのでマウストラッキングを終了する
                     self.drawingLine = True
                     # self.image に直線を描画
+                    pen = QPen(QColor(227, 23, 138, 127), 4)
                     painter = QPainter(self.image)
-                    painter.drawLine(self.firstClickPoint, self.lastClickPoint)
+                    painter.setPen(pen)
+                    painter.drawLine(self.firstLineClickPoint, self.lastLineClickPoint)
                     painter.end()
                     self.update()
                     # クリックポイントをリセット
-                    self.firstClickPoint = None
-                    self.lastClickPoint = None
+                    self.firstLineClickPoint = None
+                    self.lastLineClickPoint = None
                     self.currentMousePosition = None
                     self.drawingLine = False
+
+            # 矩形の編集時の処理.
+            elif self.shape == "Rectangle":
+
+                # 現在編集中の矩形が無い場合.
+                if self.firstRectClickPoint is None:
+                    self.firstRectClickPoint = event.position().toPoint()
+                    self.rectAngleDict[self.rectAngleID].append(self.firstRectClickPoint)
+                    self.currentEditingRectID = self.rectAngleID
+                    self.rectAngleID += 1
+                    self.setMouseTracking(True)
+
+                # 現在編集中の矩形がある場合.
+                elif self.lastRectClickPoint is None:
+                    self.lastRectClickPoint = event.position().toPoint()
+                    self.rectAngleDict[self.currentEditingRectID].append(self.lastRectClickPoint)
+                    self.setMouseTracking(False)
+                    # self.imageに矩形を描画
+                    pen = QPen(QColor(227, 149, 23), 4)
+                    painter = QPainter(self.image)
+                    painter.setPen(pen)
+                    rect = QRect(self.firstRectClickPoint, self.lastRectClickPoint)
+                    painter.drawRect(rect)
+                    painter.end()
+                    self.update()
+                    # クリックポイントをリセット
+                    self.firstRectClickPoint = None
+                    self.lastRectClickPoint = None
+                    self.drawingRect = False
 
             # ポリラインの編集時の処理
             elif self.shape == "PolyLine":
@@ -131,8 +171,8 @@ class DrawingApp(QMainWindow):
                     # 編集中のpolylineのIDを持つ配列に、現在の座標を追加する.
                     # appendすることでlen()>=2になるので後続処理でout of indexにはならない.
                     self.polyLinesDict[self.currentEditingPolyID].append(event.position().toPoint())
-                    # 描画
-                    pen = QPen(QColor(0, 255, 0, 127), 4)
+                    # self.imageにPolyLineを描画
+                    pen = QPen(QColor(181, 107, 201, 127), 4)
                     polypainter = QPainter(self.image)
                     polypainter.setPen(pen)
                     polypainter.drawLine(self.polyLinesDict[self.currentEditingPolyID][-2], self.polyLinesDict[self.currentEditingPolyID][-1])
@@ -140,14 +180,17 @@ class DrawingApp(QMainWindow):
                     self.update()
 
     def mouseDoubleClickEvent(self, event: QMouseEvent):
-        print("double click is detected.")
         if self.shape == "PolyLine":
             self.setMouseTracking(False)  # マウストラッキングを終了
             self.currentEditingPolyID = None
 
     def mouseMoveEvent(self, event: QMouseEvent):
         # 線を描画するモード.
-        if self.shape == "Line" and self.firstClickPoint is not None and self.lastClickPoint is None:
+        if self.shape == "Line" and self.firstLineClickPoint is not None and self.lastLineClickPoint is None:
+            self.currentMousePosition = event.position().toPoint()
+            self.update()
+        # 矩形を描画するモード.
+        elif self.shape == "Rectangle":
             self.currentMousePosition = event.position().toPoint()
             self.update()
         # PolyLineを描画するモード.
@@ -158,11 +201,20 @@ class DrawingApp(QMainWindow):
     def mouseReleaseEvent(self, event: QMouseEvent):
         if event.button() == Qt.LeftButton:
             self.drawing = False
+
+            # 線を描画中の場合.
             if self.drawingLine:
                 # ライン描画後にポイントをリセット
-                self.firstClickPoint = None
-                self.lastClickPoint = None
+                self.firstLineClickPoint = None
+                self.lastLineClickPoint = None
                 self.drawingLine = False
+
+            # 矩形を描画中の場合.
+            elif self.drawingRect:
+                # 矩形描画後にポイントをリセット
+                self.firstRectClickPoint = None
+                self.lastRectClickPoint = None
+                self.drawingRect = False
 
     def paintEvent(self, event):
         """
@@ -175,9 +227,6 @@ class DrawingApp(QMainWindow):
         :param event:
         :return:
         """
-        print(f"paintEvent is called. current mouse position is {self.currentMousePosition}")
-        print(self.shape)
-        print(self.currentEditingPolyID)
         canvasPainter = QPainter(self)
 
         # 以下で実施していること
@@ -189,18 +238,30 @@ class DrawingApp(QMainWindow):
 
         # もし線を描画中の場合、マウスの動きに合わせて線を描画する処理
         if (self.currentMousePosition is not None and
-                self.firstClickPoint is not None and
-                self.lastClickPoint is None):
+                self.firstLineClickPoint is not None and
+                self.lastLineClickPoint is None):
             # 点線のスタイルを設定
-            pen = QPen(Qt.black, 2, Qt.DotLine)
+            pen = QPen(QColor(255, 0, 0, 127), 2, Qt.DotLine)
             canvasPainter.setPen(pen)
-            canvasPainter.drawLine(self.firstClickPoint, self.currentMousePosition)
+            canvasPainter.drawLine(self.firstLineClickPoint, self.currentMousePosition)
+            return
+
+        # 矩形を描画中の場合、マウスの動きに合わせて矩形を描画する処理
+        if (self.shape == "Rectangle" and
+                self.currentMousePosition is not None and  # マウストラッキング中のマウスポジションが格納されており,
+                self.firstRectClickPoint is not None and  # 矩形の左上が選択済であり,
+                self.lastRectClickPoint is None):  # 矩形の右下が選択されていない場合,
+            # 点線のスタイルを設定して矩形を描画する
+            pen = QPen(QColor(255, 0, 0, 127), 2, Qt.DotLine)
+            canvasPainter.setPen(pen)
+            canvasPainter.drawRect(QRect(self.firstRectClickPoint, self.currentMousePosition))
+            return
 
         if self.shape == "PolyLine" and self.currentEditingPolyID is not None and self.currentMousePosition is not None:
-            print("OK, now polyline.")
-            pen = QPen(QColor(0, 255, 0, 127), 2, Qt.DotLine)
+            pen = QPen(QColor(255, 0, 0, 127), 2, Qt.DotLine)
             canvasPainter.setPen(pen)
             canvasPainter.drawLine(self.polyLinesDict[self.currentEditingPolyID][-1], self.currentMousePosition)
+            return
 
     def resizeEvent(self, event):
         """
