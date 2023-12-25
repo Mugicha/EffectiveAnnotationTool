@@ -1,2 +1,5 @@
-Shape: Line
-Last Point: 0, 0
+defaultdict(<class 'list'>, {0: [PySide6.QtCore.QPoint(539, 324), PySide6.QtCore.QPoint(590, 380)],
+                             1: [PySide6.QtCore.QPoint(742, 446), PySide6.QtCore.QPoint(799, 481)],
+                             2: [PySide6.QtCore.QPoint(1089, 447), PySide6.QtCore.QPoint(1137, 480)]})
+defaultdict(<class 'list'>, {0: [PySide6.QtCore.QPoint(649, 623), PySide6.QtCore.QPoint(648, 723), PySide6.QtCore.QPoint(694, 723), PySide6.QtCore.QPoint(692, 626), PySide6.QtCore.QPoint(678, 626), PySide6.QtCore.QPoint(675, 581)],
+                             1: [PySide6.QtCore.QPoint(883, 338), PySide6.QtCore.QPoint(803, 338), PySide6.QtCore.QPoint(802, 203), PySide6.QtCore.QPoint(892, 202), PySide6.QtCore.QPoint(891, 101), PySide6.QtCore.QPoint(991, 99), PySide6.QtCore.QPoint(994, 218), PySide6.QtCore.QPoint(884, 219), PySide6.QtCore.QPoint(885, 282)]})
