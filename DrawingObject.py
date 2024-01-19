@@ -56,7 +56,11 @@ class DrawingObject:
     def stop_drawing(self):
         self.is_currently_drawing = False
 
-    def set_color(self):
+    def set_color(self, _color=None):
+
+        # 一時的に色を変えたい時.
+        if _color is not None and isinstance(_color, QColor):
+            self.color = _color
 
         if self.custom_color is not None:
             self.color = self.custom_color

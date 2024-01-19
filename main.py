@@ -1,12 +1,12 @@
 import sys
 from collections import defaultdict
 
-from PySide6.QtWidgets import QApplication, QMainWindow, QPushButton, QComboBox, QFileDialog, QMessageBox
+from PySide6.QtWidgets import QApplication, QMainWindow, QPushButton, QComboBox, QFileDialog, QMessageBox, \
+    QCheckBox  # , QListWidget
 from PySide6.QtGui import QPainter, QMouseEvent, QImage, QPen, QColor
 from PySide6.QtCore import Qt, QPoint, QRect
 from shapely import LineString
 from shapely.geometry import Point
-from typing import Union, Tuple
 
 from DrawingObject import DrawingObject
 
@@ -22,9 +22,16 @@ class DrawingApp(QMainWindow):
         # タイトルの設定
         self.setWindowTitle("Drawing Application")
 
-        # windowを特定の位置に配置する処理（100,100）を左上にして、
+        # main windowを特定の位置に配置する処理（100,100）を左上にして、
         # 800x600のサイズのウィンドウを作成する.
         self.setGeometry(100, 100, 800, 600)
+
+        # # Listを配置する.
+        # main windowの左上に対して, x=650, y=10 から幅140, 高さ580で配置する.
+        # self.objectListWidget = QListWidget(self)
+        # self.objectListWidget.setGeometry(650, 10, 140, 580)
+        # # キーボードのフォーカスを確保する.
+        # self.setFocusPolicy(Qt.StrongFocus)
 
         # Drawing settings
         self.image = QImage(self.size(), QImage.Format_RGB32)
@@ -35,6 +42,10 @@ class DrawingApp(QMainWindow):
         self.editingDrawingObject = None
         self.modifyingDrawingObject = None  # 修正対象のオブジェクトを一時的に格納する変数.
         self.currentMousePosition = None  # 現在のマウスの位置を格納する変数.
+
+        # 複数選択した際、選択されたオブジェクトを一時的に格納する配列
+        self.selected_object = []
+        self.range_coordinates = []  # 範囲選択の座標を格納する配列.
 
         # 直線を引くために必要な初期化処理
         self.linesDict = defaultdict(DrawingObject)
@@ -53,6 +64,12 @@ class DrawingApp(QMainWindow):
         self.lastRectClickPoint = None  # 矩形右下座標を格納する座標
         self.drawingRect = False
 
+        # 線, ポリライン, 矩形の辞書型配列をさらに統合する辞書型配列.
+        self.objectDict = {"Line": self.linesDict,
+                           "Rectangle": self.rectAngleDict,
+                           "PolyLine": self.polyLinesDict,
+                           }
+
         # 描画用のプルダウンに関する設定
         self.shapeComboBox = QComboBox(self)
         self.shapeComboBox.addItem("Line")
@@ -60,6 +77,12 @@ class DrawingApp(QMainWindow):
         self.shapeComboBox.addItem("PolyLine")
         self.shapeComboBox.move(10, 10)
         self.shapeComboBox.activated[int].connect(self.shapeChanged)
+
+        # 範囲選択を行うチェックボックス
+        self.checkbox = QCheckBox("範囲選択", self)
+        self.checkbox.move(150, 10)
+        self.checkbox.stateChanged.connect(self.switchRangeSelectionState)
+        self.allow_range_selection = False  # 範囲選択ができる状態かどうかを保存する変数.
 
         # Button to import image
         self.importButton = QPushButton("Import Image", self)
@@ -70,7 +93,7 @@ class DrawingApp(QMainWindow):
             "color: white;"
             "}"
         )
-        self.importButton.move(150, 10)
+        self.importButton.move(280, 10)
         self.importButton.clicked.connect(self.importImage)
 
         # Button to export drawing
@@ -82,7 +105,7 @@ class DrawingApp(QMainWindow):
             "color: white;"
             "}"
         )
-        self.exportButton.move(280, 10)
+        self.exportButton.move(410, 10)
         self.exportButton.clicked.connect(self.exportDrawing)
 
     def shapeChanged(self, index):
@@ -94,9 +117,7 @@ class DrawingApp(QMainWindow):
         self.shape = self.shapeComboBox.itemText(index)
         # todo: self.editingDrawingObject or self.modifyingDrawingObject がNoneでなければリセットする処理を入れたい.
 
-    def setDrawLayer(self,
-                     _obj: DrawingObject,
-                     ):
+    def setDrawLayer(self, _obj: DrawingObject) -> DrawingObject:
         """
         格納された座標情報をもとに、新たなレイヤーを作成し描画し、
         レイヤー情報を格納したDrawingObjectクラスの変数を返す関数.
@@ -167,8 +188,75 @@ class DrawingApp(QMainWindow):
         :return:
         """
 
-        # 左クリック（描画）の場合　
+        # Ctrl押しながらクリックしている場合,
+        if event.button() == Qt.LeftButton and event.modifiers() & Qt.ControlModifier:
+            print("Ctrl + Click detected.")
+
+            # クリックした座標を取得し
+            ctrl_point = event.position().toPoint()
+
+            # 最も近い場所にあるオブジェクトを探し
+            nearest_object = self.findClosestObject(ctrl_point)
+
+            # 選択中と分かるように、一時的に色を変える.
+            nearest_object.color = QColor(0, 255, 0, 127)
+            nearest_object = self.setDrawLayer(nearest_object)  # 戻り値は、色が変わってレイヤーが再描画されたDrawingObject.
+
+            # 複数選択用の配列にappendする. 参照渡しのため、各種辞書変数のvalue側も変更されることに注意.
+            self.selected_object.append(nearest_object)
+
+            # 普通の左クリックが検知されないようにreturnし、この関数の処理を終了する.
+            return
+
+        # 普通の左クリック（描画）の場合　
         if event.button() == Qt.LeftButton:
+
+            # 複数選択中の場合, 複数選択を解除する.
+            if len(self.selected_object) > 0:
+
+                # 選択中のオブジェクトの色を全てリセットする.
+                # 参照渡しなので、Dictのほうも変更されるはず
+                for _obj in self.selected_object:
+                    _obj.set_color()
+                    self.setDrawLayer(_obj=_obj)
+
+                self.selected_object = []
+                return
+
+            # 範囲選択が可能な状態の場合.
+            if self.allow_range_selection:
+
+                # マウスの位置を取得
+                clickedMousePosition = event.position().toPoint()
+
+                # 矩形選択中じゃない場合. = 矩形の1点目がない場合.
+                if len(self.range_coordinates) == 0:
+
+                    # まだマウストラッキングを行っていない場合,
+                    if self.currentMousePosition is None:
+
+                        # 修正点を格納する
+                        self.range_coordinates.append(clickedMousePosition)
+
+                        # トラッキングを開始
+                        self.setMouseTracking(True)
+
+                # 矩形選択中の場合. = 矩形の2点目がない場合.
+                elif len(self.range_coordinates) == 1:
+
+                    self.range_coordinates.append(clickedMousePosition)
+
+                    # トラッキングを停止
+                    self.setMouseTracking(False)
+
+                    # 描画した矩形の中にあるオブジェクトを特定し,
+                    self.selected_object = self.isInsideOfRect(self.range_coordinates)  # DrawingObject型変数のリスト.
+
+                    # 各種リセット
+                    self.currentMousePosition = None
+                    self.range_coordinates = []
+
+                return
 
             # 線描画時の処理.
             if self.shape == "Line":
@@ -363,7 +451,7 @@ class DrawingApp(QMainWindow):
                         # レイヤーを取得.
                         self.editingDrawingObject = self.setDrawLayer(self.editingDrawingObject)
 
-        # 右クリック（オブジェクトの修正）の場合,
+        # 普通の右クリック（オブジェクトの修正）の場合,
         elif event.button() == Qt.RightButton:
 
             # 修正中のオブジェクトが存在する中で右クリックした場合,
@@ -422,9 +510,6 @@ class DrawingApp(QMainWindow):
                                 # 変えた色で再描画する
                                 self.setDrawLayer(_obj=self.modifyingDrawingObject)
 
-                                # test
-                                print(f"Start Modifying: {d}, {k}")
-
     def mouseDoubleClickEvent(self, event: QMouseEvent):
         if self.shape == "PolyLine":
             self.setMouseTracking(False)  # マウストラッキングを終了
@@ -437,6 +522,11 @@ class DrawingApp(QMainWindow):
             self.currentMousePosition = None
 
     def mouseMoveEvent(self, event: QMouseEvent):
+
+        # 範囲選択中の場合,
+        if self.allow_range_selection:
+            self.currentMousePosition = event.position().toPoint()
+            self.update()
 
         # 描画中の場合
         if self.editingDrawingObject is not None:
@@ -473,7 +563,6 @@ class DrawingApp(QMainWindow):
                 self.currentMousePosition = event.position().toPoint()
                 self.update()  # 描画
 
-
     def mouseReleaseEvent(self, event: QMouseEvent):
         if event.button() == Qt.LeftButton:
 
@@ -487,7 +576,37 @@ class DrawingApp(QMainWindow):
                 # 矩形描画後にポイントをリセット
                 self.drawingRect = False
 
-    def paintEvent(self, event):
+    def keyPressEvent(self, event) -> None:
+        """
+        キーボードのキーが押された時のイベントハンドラ.
+        ---
+        d: 選択中のオブジェクトを消す.
+
+        :param event:
+        :return:
+        """
+        print("keypress is triggered.")
+        # "d"キー
+        if event.key() == Qt.Key_D:
+
+            # 複数選択した状態であれば,
+            if len(self.selected_object) > 0:
+
+                # 複数選択しているオブジェクトごとに,
+                for each_obj in self.selected_object:
+
+                    # objectの辞書型から消す.
+                    del self.objectDict[each_obj.object_type][each_obj.id]
+
+                # 複数選択状態をリセット.
+                self.selected_object = []
+
+                # 再描画(削除したオブジェクトを消す)
+                self.update()
+
+            return
+
+    def paintEvent(self, event) -> None:
         """
         以下のタイミングでcallされる処理.
         -------
@@ -520,9 +639,18 @@ class DrawingApp(QMainWindow):
                                         self.editingDrawingObject.layerImage.rect(),
                                         )
 
-        # 編集・修正中でない場合は、ここでreturnする.
-        # if self.editingDrawingObject is None or self.modifyingDrawingObject is None:
-        #     return
+        # もし範囲選択中の場合,
+        if self.allow_range_selection and len(self.range_coordinates) == 1:
+
+            if self.currentMousePosition is not None:
+
+                pen = QPen(QColor(125, 125, 125, 127))
+                canvasPainter.setPen(pen)
+                canvasPainter.drawRect(QRect(self.range_coordinates[0],
+                                             self.currentMousePosition,
+                                             ))
+                canvasPainter.end()
+                return
 
         # もし線を描画中の場合、
         if self.editingDrawingObject is not None:
@@ -613,7 +741,7 @@ class DrawingApp(QMainWindow):
                                            )
                 canvasPainter.end()
 
-    def resizeEvent(self, event):
+    def resizeEvent(self, event) -> None:
         """
         画面がリサイズされた時に呼ばれるイベント.
         :param event:
@@ -632,6 +760,10 @@ class DrawingApp(QMainWindow):
         # イメージを更新
         self.image = newImage
 
+        # # ListWidgetの位置を更新する.
+        # self.updateListWidgetGeometry()
+
+        # 親クラス側のメソッドも実行する.
         super().resizeEvent(event)
 
     def findClosestPointAndIndex(self,
@@ -701,8 +833,145 @@ class DrawingApp(QMainWindow):
 
         return closestPoint, closestIndex
 
+    def findClosestObject(self, _point: QPoint) -> DrawingObject:
+        """
+        マウスポイントから最も近い位置にあるDrawingObjectクラスのインスタンスを返す.
+
+        :param _point:
+        :return: _pointに最も近いDrawingObjectクラスのインスタンス.
+        """
+
+        # 検索対象のオブジェクトの辞書型を指定できるようにしても良い.
+
+        for d in [self.linesDict, self.rectAngleDict, self.polyLinesDict]:
+
+            # マウスポインタの座標が既に描画された線や矩形の近くである場合
+            for k, v in d.items():
+                # key  : object's id
+                # value: DrawingObject class instance.
+
+                # ShapelyのLineStringに変換
+                each_linestring = self.point2linestring(_obj=v)
+
+                # marginを追加
+                each_linestring_margin = each_linestring.buffer(MARGIN)
+
+                # 右クリックした時のマウス座標が、marginの中なら,
+                if each_linestring_margin.contains(Point(_point.x(), _point.y())):
+                    return v
+
+        # 見つからなければNoneを返す
+        return None
+
+    def isInsideOfRect(self, point_list: list) -> list:
+        """
+        QPoint型の2点から成る矩形の中に含まれるDrawingObject型変数を探す.
+
+        :param point_list:
+        :return: 描画した矩形の領域内に含まれるDrawingObjectクラスを要素とした配列.
+        """
+        # 範囲選択した矩形をQRect型で定義.
+        rect = QRect(point_list[0], point_list[1])
+
+        # 矩形内に含まれるDrawingObject型変数を格納するリスト
+        inside_list = []
+
+        # 線やポリラインの場合,
+        for d in [self.linesDict, self.polyLinesDict]:
+
+            # 各オブジェクトごとの,
+            for each_object in d.values():
+
+                isinsideflag = False
+
+                # 各座標点ごとに,
+                for _p in each_object.coordinates:
+
+                    # 点が矩形に含まれれば
+                    if rect.contains(_p):
+
+                        # フラグを立てる.
+                        isinsideflag = True
+
+                # 1つでも含まれている点があれば,
+                if isinsideflag:
+
+                    # リストに加える.
+                    inside_list.append(each_object)
+
+        # 矩形の場合,
+        for each_object in self.rectAngleDict.values():
+
+            # QRectを作り,
+            target_rect = QRect(each_object.coordinates[0], each_object.coordinates[1])
+
+            # 範囲選択した領域に矩形の各頂点が含まれるか確認し,
+            check_tr = rect.contains(target_rect.topRight())
+            check_tl = rect.contains(target_rect.topLeft())
+            check_br = rect.contains(target_rect.bottomRight())
+            check_bl = rect.contains(target_rect.bottomLeft())
+
+            # 四隅のどれかが含まれる場合,
+            if check_tr or check_tl or check_br or check_bl:
+
+                # リストに加える.
+                inside_list.append(each_object)
+
+        # 最後に一気に色を変える.
+        for each_object in inside_list:
+            each_object.color = QColor(0, 255, 0, 127)
+        inside_list = [self.setDrawLayer(x) for x in inside_list]
+
+        return inside_list
+
+    def switchRangeSelectionState(self, state):
+        """
+        範囲選択が可能かどうかの状態を切り替える関数.
+        「範囲選択」チェックボックスのイベントハンドラ.
+
+        :param state:  チェックされたかどうかを示すint型. チェックされたら2.
+        :return:
+        """
+        def resetColor():
+            """
+            現在選択されているオブジェクトの色をリセットする内部関数.
+            :return:
+            """
+            for each_selected_object in self.selected_object:
+                # 何かしら選択状態であるオブジェクトの色を元に戻す処理を入れる.
+                each_selected_object.set_color()
+                _ = self.setDrawLayer(each_selected_object)
+
+        # チェックが入った時.
+        # PySide6.QtCore.Qt.CheckState型に合わせ、両者を比較する.
+        if Qt.CheckState(state) == Qt.Checked:
+
+            # 既に選択済みのオブジェクトがあれば、一度リセットする
+            # Todo: UXを検証すること. もしかしたらいらないかも.
+            resetColor()
+            self.selected_object = []
+            self.allow_range_selection = True
+
+        # チェックが解除された時.
+        else:
+            self.allow_range_selection = False
+            resetColor()
+            # 選択したオブジェクトを解除する.
+            self.selected_object = []
+
+    # def updateListWidgetGeometry(self) -> None:
+    #     """
+    #     QListWidgetの位置とサイズを更新する.
+    #     :return:
+    #     """
+    #     width = 150  # QListWidgetの幅
+    #     height = self.height()  # ウィンドウの高さに合わせる
+    #     x = self.width() - width  # ウィンドウの右端に合わせる
+    #     y = 0  # ウィンドウの上端から始める
+    #     self.objectListWidget.setGeometry(x, y, width, height)
+
     @staticmethod
-    def point2linestring(_obj: DrawingObject):
+    def point2linestring(_obj: DrawingObject) -> LineString:
         """
         QPoint型のPoint情報を使って、LineString型変数を返す関数.
         :param _obj: DrawingObjectクラス変数
