@@ -1,3 +1,4 @@
+from PySide6.QtCore import QSize, QPointF
 from PySide6.QtGui import QColor
 from PySide6.QtGui import QImage
 
@@ -19,8 +20,9 @@ class DrawingObject:
             raise ValueError(f"Invalid object type. Allowed types are: {self.TYPES}")
 
         self.id = id
+        self.object_name = f"{object_type}_{id}"
         self.object_type = object_type
-        self.coordinates = [] if coordinates is None else []  # List of coordinates.
+        self.coordinates = [] if coordinates is None else coordinates  # List of coordinates.
         self.is_being_modified = False  # 修正中かどうか
         self.is_currently_drawing = False  # 編集中かどうか
         self.line_thickness = line_thickness  # 線の太さ（ピクセル値）
@@ -36,6 +38,7 @@ class DrawingObject:
         # 色の設定
         # QColorオブジェクトが指定されている場合
         if color is not None and isinstance(color, QColor):
+
             # カスタムカラーとして保存しておく.
             self.custom_color = color
 
@@ -77,6 +80,18 @@ class DrawingObject:
 
     def set_layer(self, layer: QImage):
         self.layerImage = layer
+
+    def set_relative_coordinates(self, window_size: QSize, coordinate: QPointF):
+        """
+        画像のサイズと、マウスクリックされた座標から、
+        オブジェクトの相対位置を算出する関数.
+        :param window_size: 座標が記録された時点のウィンドウサイズ. QSize型.
+        :param coordinate: 記録したい座標. QPoint型.
+        :return: 相対位置が格納されたQpoint.
+        """
+        relative_coordinates_width = coordinate.x() / window_size.width()
+        relative_coordinates_height = coordinate.y() / window_size.height()
+        return QPointF(relative_coordinates_width, relative_coordinates_height)
 
     def __repr__(self):
         return f"DrawingObject(type={self.object_type}, coordinates={self.coordinates}, color={self.color}, thickness={self.line_thickness})"

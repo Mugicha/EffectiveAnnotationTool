@@ -2,9 +2,9 @@ import sys
 from collections import defaultdict
 
 from PySide6.QtWidgets import QApplication, QMainWindow, QPushButton, QComboBox, QFileDialog, QMessageBox, \
-    QCheckBox  # , QListWidget
+    QCheckBox, QHBoxLayout, QVBoxLayout  # , QListWidget
 from PySide6.QtGui import QPainter, QMouseEvent, QImage, QPen, QColor
-from PySide6.QtCore import Qt, QPoint, QRect
+from PySide6.QtCore import Qt, QRect, QSize, QPointF, QPoint
 from shapely import LineString
 from shapely.geometry import Point
 
@@ -108,6 +108,24 @@ class DrawingApp(QMainWindow):
         self.exportButton.move(410, 10)
         self.exportButton.clicked.connect(self.exportDrawing)
 
+        # # レイアウト
+        # self.main_layout = QHBoxLayout()
+        #
+        # # サイドバー
+        # self.sidebar_layout = QVBoxLayout()
+        #
+        # # サイドバーにボタンを追加
+        # self.sidebar_layout.addWidget(self.importButton)
+        # self.sidebar_layout.addWidget(self.shapeComboBox)
+        # self.sidebar_layout.addWidget(self.checkbox)
+        # self.sidebar_layout.addWidget(self.exportButton)
+        #
+        # # メインレイアウト
+        # self.main_layout.addLayout(self.sidebar_layout)
+        # self.main_layout.addWidget()
+        #
+        # self.setLayout(self.main_layout)
+
     def shapeChanged(self, index):
         """
         プルダウンを使って、描画するタイプが変更された時の処理.
@@ -125,8 +143,11 @@ class DrawingApp(QMainWindow):
         :param _obj: DrawingObjectクラスの変数.
         :return:
         """
+
+        window_size = self.size()
+
         # 背景透明のレイヤーを用意する.
-        layer = QImage(self.size(), QImage.Format.Format_ARGB32)
+        layer = QImage(window_size, QImage.Format.Format_ARGB32)
         layer.fill(Qt.transparent)
 
         # レイヤーに描画する.
@@ -134,17 +155,24 @@ class DrawingApp(QMainWindow):
         painter = QPainter(layer)
         painter.setPen(pen)
         if _obj.object_type == "Line":
-            painter.drawLine(_obj.coordinates[0], _obj.coordinates[1])
+            painter.drawLine(self.get_actual_coordinate(_obj.coordinates[0], window_size),
+                             self.get_actual_coordinate(_obj.coordinates[1], window_size),
+                             )
         elif _obj.object_type == "Rectangle":
-            rect = QRect(_obj.coordinates[0],
-                         _obj.coordinates[1],
+            rect = QRect(self.get_actual_coordinate(_obj.coordinates[0], window_size),
+                         self.get_actual_coordinate(_obj.coordinates[1], window_size),
                          )
             painter.drawRect(rect)
         elif _obj.object_type == "PolyLine":
             for i in range(1, len(_obj.coordinates)):
-                painter.drawLine(_obj.coordinates[i-1],
-                                 _obj.coordinates[i],
+                painter.drawLine(self.get_actual_coordinate(_obj.coordinates[i-1], window_size),
+                                 self.get_actual_coordinate(_obj.coordinates[i], window_size),
                                  )
+
+        # 各オブジェクトの名前を表示.
+        painter.drawText(self.get_actual_coordinate(_obj.coordinates[0], window_size),
+                         _obj.object_name,
+                         )
         # 後処理
         painter.end()
         self.update()
@@ -193,10 +221,10 @@ class DrawingApp(QMainWindow):
             print("Ctrl + Click detected.")
 
             # クリックした座標を取得し
-            ctrl_point = event.position().toPoint()
+            ctrl_point = event.position().toPoint()  # type: QPoint
 
             # 最も近い場所にあるオブジェクトを探し
-            nearest_object = self.findClosestObject(ctrl_point)
+            nearest_object = self.findClosestObject(ctrl_point)  # 絶対座標系を前提とする.
 
             # 選択中と分かるように、一時的に色を変える.
             nearest_object.color = QColor(0, 255, 0, 127)
@@ -227,7 +255,7 @@ class DrawingApp(QMainWindow):
             if self.allow_range_selection:
 
                 # マウスの位置を取得
-                clickedMousePosition = event.position().toPoint()
+                clickedMousePosition = event.position().toPoint()  # type: QPoint
 
                 # 矩形選択中じゃない場合. = 矩形の1点目がない場合.
                 if len(self.range_coordinates) == 0:
@@ -235,7 +263,7 @@ class DrawingApp(QMainWindow):
                     # まだマウストラッキングを行っていない場合,
                     if self.currentMousePosition is None:
 
-                        # 修正点を格納する
+                        # 矩形選択範囲の座標を格納する（絶対座標系）
                         self.range_coordinates.append(clickedMousePosition)
 
                         # トラッキングを開始
@@ -244,6 +272,7 @@ class DrawingApp(QMainWindow):
                 # 矩形選択中の場合. = 矩形の2点目がない場合.
                 elif len(self.range_coordinates) == 1:
 
+                    # 矩形選択範囲の座標を格納する（絶対座標系）
                     self.range_coordinates.append(clickedMousePosition)
 
                     # トラッキングを停止
@@ -265,7 +294,7 @@ class DrawingApp(QMainWindow):
                 if self.modifyingDrawingObject is not None:
 
                     # マウスの位置を取得
-                    currentMousePosition = event.position().toPoint()
+                    currentMousePosition = event.position().toPoint()  # type: QPoint
 
                     # まだマウストラッキングを行っていない場合,
                     if self.currentMousePosition is None:
@@ -282,14 +311,13 @@ class DrawingApp(QMainWindow):
 
                     else:
 
-                        # クリックしたマウス座標で置き換える.
-                        self.modifyingDrawingObject.coordinates[self.modifyingDrawingObject.modifying_coordinate_index] = currentMousePosition
+                        # クリックしたマウス座標を相対位置に変換のうえ置き換える.
+                        self.modifyingDrawingObject.coordinates[self.modifyingDrawingObject.modifying_coordinate_index] = self.get_relative_coordinate(currentMousePosition)
                         self.currentMousePosition = None
                         self.modifyingDrawingObject.modifying_coordinate_index = None
 
                         # レイヤーを新しい座標で再描画し、辞書型変数に戻す.
                         self.linesDict[self.modifyingDrawingObject.id] = self.setDrawLayer(self.modifyingDrawingObject)
-                        # self.modifyingDrawingObject = None
                         self.update()
 
                         # マウストラッキングを停止.
@@ -302,7 +330,7 @@ class DrawingApp(QMainWindow):
                     if self.editingDrawingObject is None:
 
                         self.editingDrawingObject = DrawingObject(id=self.lineID, object_type="Line")
-                        self.editingDrawingObject.coordinates.append(event.position().toPoint())
+                        self.editingDrawingObject.coordinates.append(self.get_relative_coordinate(abs_coord=event.position().toPoint()))
 
                         self.lineID += 1
                         self.setMouseTracking(True)  # 点線の描画の為に、マウストラッキングを開始する
@@ -313,7 +341,7 @@ class DrawingApp(QMainWindow):
                         self.setMouseTracking(False)  # 始点終点がセットされたのでマウストラッキングを終了する
 
                         # 座標の取得・格納
-                        self.editingDrawingObject.coordinates.append(event.position().toPoint())
+                        self.editingDrawingObject.coordinates.append(self.get_relative_coordinate(abs_coord=event.position().toPoint()))
 
                         # self.image に直線を描画
                         self.drawingLine = True
@@ -352,7 +380,7 @@ class DrawingApp(QMainWindow):
                     else:
 
                         # クリックしたマウス座標で置き換える.
-                        self.modifyingDrawingObject.coordinates[self.modifyingDrawingObject.modifying_coordinate_index] = currentMousePosition
+                        self.modifyingDrawingObject.coordinates[self.modifyingDrawingObject.modifying_coordinate_index] = self.get_relative_coordinate(currentMousePosition)
                         self.currentMousePosition = None
                         self.modifyingDrawingObject.modifying_coordinate_index = None
 
@@ -371,7 +399,7 @@ class DrawingApp(QMainWindow):
 
                         # 新規作成
                         self.editingDrawingObject = DrawingObject(id=self.rectAngleID, object_type="Rectangle")
-                        self.editingDrawingObject.coordinates.append(event.position().toPoint())
+                        self.editingDrawingObject.coordinates.append(self.get_relative_coordinate(event.position().toPoint()))
 
                         self.rectAngleID += 1
                         self.setMouseTracking(True)
@@ -379,7 +407,7 @@ class DrawingApp(QMainWindow):
                     # 現在編集中の矩形がある場合.
                     elif len(self.editingDrawingObject.coordinates) == 1:
                         # 座標の取得・格納
-                        self.editingDrawingObject.coordinates.append(event.position().toPoint())
+                        self.editingDrawingObject.coordinates.append(self.get_relative_coordinate(event.position().toPoint()))
                         self.setMouseTracking(False)
 
                         # 中間変数から、rectAngleDictへ格上げ
@@ -416,7 +444,7 @@ class DrawingApp(QMainWindow):
                     else:
 
                         # クリックしたマウス座標で置き換える.
-                        self.modifyingDrawingObject.coordinates[self.modifyingDrawingObject.modifying_coordinate_index] = currentMousePosition
+                        self.modifyingDrawingObject.coordinates[self.modifyingDrawingObject.modifying_coordinate_index] = self.get_relative_coordinate(currentMousePosition)
                         self.currentMousePosition = None
                         self.modifyingDrawingObject.modifying_coordinate_index = None
 
@@ -435,7 +463,7 @@ class DrawingApp(QMainWindow):
 
                         # 新しいオブジェクトを作成
                         self.editingDrawingObject = DrawingObject(id=self.polyLineID, object_type="PolyLine")
-                        self.editingDrawingObject.coordinates.append(event.position().toPoint())
+                        self.editingDrawingObject.coordinates.append(self.get_relative_coordinate(event.position().toPoint()))
 
                         # IDをインクリメントする.
                         self.polyLineID += 1
@@ -447,7 +475,7 @@ class DrawingApp(QMainWindow):
                     elif len(self.editingDrawingObject.coordinates) >= 1:
                         # 編集中のpolylineのIDを持つ配列に、現在の座標を追加する.
                         # appendすることでlen()>=2になるので後続処理でout of indexにはならない.
-                        self.editingDrawingObject.coordinates.append(event.position().toPoint())
+                        self.editingDrawingObject.coordinates.append(self.get_relative_coordinate(event.position().toPoint()))
                         # レイヤーを取得.
                         self.editingDrawingObject = self.setDrawLayer(self.editingDrawingObject)
 
@@ -475,10 +503,15 @@ class DrawingApp(QMainWindow):
                 return
 
             # 修正中のオブジェクトが存在しない中で右クリックした場合,
+            # この処理はmarginを持たせることから、相対座標ではなく絶対座標での計算をさせたい.
             else:
 
-                # マウスポインタの座標を取得
+                # 画面サイズを取得.
+                window_size = self.size()
+
+                # マウスポインタの座標を取得し、ShapelyのPoint型（相対座標）に変換する.
                 mouseCoord = event.position().toPoint()  # type: QPoint
+                # mouseCoordPoint = Point(mouseCoord.x()/window_size.width(), mouseCoord.y()/window_size.height())  # type: Point
                 mouseCoordPoint = Point(mouseCoord.x(), mouseCoord.y())  # type: Point
 
                 # クリックした近くのオブジェクトの特定.
@@ -489,8 +522,8 @@ class DrawingApp(QMainWindow):
                         # key  : object's id
                         # value: DrawingObject class instance.
 
-                        # ShapelyのLineStringに変換
-                        each_linestring = self.point2linestring(_obj=v)
+                        # ShapelyのLineStringに変換(絶対座標に変換もしている)
+                        each_linestring = self.point2linestring(_obj=v, window_size=window_size)
 
                         # marginを追加
                         each_linestring_margin = each_linestring.buffer(MARGIN)
@@ -522,6 +555,13 @@ class DrawingApp(QMainWindow):
             self.currentMousePosition = None
 
     def mouseMoveEvent(self, event: QMouseEvent):
+        """
+        DrawingObjectを描画中や修正中の場合に、マウスの位置を取得する関数.
+        計算量が膨大になることから、絶対座標で保持する.
+
+        :param event:
+        :return:
+        """
 
         # 範囲選択中の場合,
         if self.allow_range_selection:
@@ -617,6 +657,7 @@ class DrawingApp(QMainWindow):
         :param event:
         :return:
         """
+        window_size = self.size()
         canvasPainter = QPainter(self)
         # 以下で実施していること
         # drawImage の呼び出しは self.image の全体を DrawingApp ウィンドウの全体に描画することを意味する。
@@ -644,6 +685,7 @@ class DrawingApp(QMainWindow):
 
             if self.currentMousePosition is not None:
 
+                # 描画する. range_coordinates, currentMousePositionともに絶対座標.
                 pen = QPen(QColor(125, 125, 125, 127))
                 canvasPainter.setPen(pen)
                 canvasPainter.drawRect(QRect(self.range_coordinates[0],
@@ -652,7 +694,7 @@ class DrawingApp(QMainWindow):
                 canvasPainter.end()
                 return
 
-        # もし線を描画中の場合、
+        # もし描画中の場合、
         if self.editingDrawingObject is not None:
 
             # マウスの動きに合わせて線を描画する処理
@@ -662,7 +704,9 @@ class DrawingApp(QMainWindow):
                 # 点線のスタイルを設定
                 pen = QPen(QColor(255, 0, 0, 127), 2, Qt.DotLine)
                 canvasPainter.setPen(pen)
-                canvasPainter.drawLine(self.editingDrawingObject.coordinates[0], self.currentMousePosition)
+                canvasPainter.drawLine(self.get_actual_coordinate(self.editingDrawingObject.coordinates[0]),
+                                       self.currentMousePosition,
+                                       )
                 canvasPainter.end()
                 return
 
@@ -674,7 +718,9 @@ class DrawingApp(QMainWindow):
                 # 点線のスタイルを設定して矩形を描画する
                 pen = QPen(QColor(255, 0, 0, 127), 2, Qt.DotLine)
                 canvasPainter.setPen(pen)
-                canvasPainter.drawRect(QRect(self.editingDrawingObject.coordinates[0],
+                canvasPainter.drawRect(QRect(self.get_actual_coordinate(self.editingDrawingObject.coordinates[0],
+                                                                        window_size,
+                                                                        ),
                                              self.currentMousePosition,
                                              ))
                 canvasPainter.end()
@@ -686,7 +732,11 @@ class DrawingApp(QMainWindow):
                     self.currentMousePosition is not None):
                 pen = QPen(QColor(255, 0, 0, 127), 2, Qt.DotLine)
                 canvasPainter.setPen(pen)
-                canvasPainter.drawLine(self.editingDrawingObject.coordinates[-1], self.currentMousePosition)
+                canvasPainter.drawLine(self.get_actual_coordinate(self.editingDrawingObject.coordinates[-1],
+                                                                  window_size,
+                                                                  ),
+                                       self.currentMousePosition,
+                                       )
                 canvasPainter.end()
                 return
 
@@ -703,22 +753,26 @@ class DrawingApp(QMainWindow):
 
                 pen = QPen(QColor(255, 0, 0, 127), 2, Qt.DotLine)
                 canvasPainter.setPen(pen)
-                canvasPainter.drawLine(self.modifyingDrawingObject.coordinates[fixed_point_index],
+                canvasPainter.drawLine(self.get_actual_coordinate(self.modifyingDrawingObject.coordinates[fixed_point_index],
+                                                                  window_size,
+                                                                  ),
                                        self.currentMousePosition,
                                        )
                 # canvasPainter.end()
 
             # 矩形の場合
             elif (self.modifyingDrawingObject.object_type == "Rectangle" and
-                    self.modifyingDrawingObject.modifying_coordinate_index is not None):
+                    self.modifyingDrawingObject.modifying_coordinate_index is not None and
+                    self.currentMousePosition is not None):
 
                 fixed_point_index = 0 if self.modifyingDrawingObject.modifying_coordinate_index == 1 else 1
 
                 pen = QPen(QColor(255, 0, 0, 127), 2, Qt.DotLine)
                 canvasPainter.setPen(pen)
-                canvasPainter.drawRect(QRect(self.modifyingDrawingObject.coordinates[fixed_point_index],
-                                             self.currentMousePosition,
-                                             )
+                canvasPainter.drawRect(QRect(self.get_actual_coordinate(self.modifyingDrawingObject.coordinates[fixed_point_index],
+                                                                        window_size,
+                                                                        ),
+                                             self.currentMousePosition),
                                        )
                 canvasPainter.end()
 
@@ -731,12 +785,16 @@ class DrawingApp(QMainWindow):
 
                 # 線を１本だけ引く場合
                 if self.modifyingDrawingObject.modifying_coordinate_index > 0:
-                    canvasPainter.drawLine(self.modifyingDrawingObject.coordinates[self.modifyingDrawingObject.modifying_coordinate_index-1],
+                    canvasPainter.drawLine(self.get_actual_coordinate(self.modifyingDrawingObject.coordinates[self.modifyingDrawingObject.modifying_coordinate_index-1],
+                                                                      window_size,
+                                                                      ),
                                            self.currentMousePosition,
                                            )
                 # 線を２本だけ引く場合
                 if self.modifyingDrawingObject.modifying_coordinate_index < len(self.modifyingDrawingObject.coordinates)-1:
-                    canvasPainter.drawLine(self.modifyingDrawingObject.coordinates[self.modifyingDrawingObject.modifying_coordinate_index+1],
+                    canvasPainter.drawLine(self.get_actual_coordinate(self.modifyingDrawingObject.coordinates[self.modifyingDrawingObject.modifying_coordinate_index+1],
+                                                                      window_size,
+                                                                      ),
                                            self.currentMousePosition,
                                            )
                 canvasPainter.end()
@@ -754,7 +812,7 @@ class DrawingApp(QMainWindow):
         newImage = QImage(newSize, QImage.Format_RGB32)
         newImage.fill(Qt.white)
         painter = QPainter(newImage)
-        painter.drawImage(QPoint(0, 0), self.image)
+        painter.drawImage(QPointF(0, 0), self.image)
         painter.end()
 
         # イメージを更新
@@ -767,14 +825,14 @@ class DrawingApp(QMainWindow):
         super().resizeEvent(event)
 
     def findClosestPointAndIndex(self,
-                                 _point: QPoint,
+                                 _point: QPointF,
                                  _obj: DrawingObject,
-                                 ) -> (QPoint, int):
+                                 ) -> (QPointF, int):
         """
-        マウスクリックの座標と最も近い点をDrawingObjectクラスのcoordinatesから抽出し、
-        その点とインデックスを返す関数.
+        マウスクリックの座標と最も近い点をDrawingObjectクラスのcoordinatesから抽出し、その点とインデックスを返す関数.
+        マウスクリックの座標は絶対座標なので、相対座標に変換して計算する.
 
-        :param _point: マウスクリックされた座標点 (QPoint オブジェクト).
+        :param _point: マウスクリックされた座標点 (QPoint オブジェクト). 絶対座標系.
         :param _obj: DrawingObjectクラスのインスタンス.
         :return: (coordinatesリストの中で最もmousePointに近い点, その点のインデックス) (QPoint オブジェクト, int).
         """
@@ -785,9 +843,14 @@ class DrawingApp(QMainWindow):
         closestIndex = -1
         minDistance = float('inf')
 
+        # マウスクリックの座標を相対座標に変換する.
+        window_size = self.size()
+        _point = QPointF(_point.x() / window_size.width(), _point.y() / window_size.height())
+
         # 矩形の場合
         if _obj.object_type == "Rectangle":
 
+            # DrawingObjectの座標なのでここは相対座標.
             p1 = _obj.coordinates[0]
             p2 = _obj.coordinates[1]
 
@@ -798,10 +861,10 @@ class DrawingApp(QMainWindow):
             max_y = max(p1.y(), p2.y())
 
             # 矩形の四隅の座標を計算
-            bottom_left = QPoint(min_x, min_y)  # type: QPoint
-            bottom_right = QPoint(max_x, min_y)
-            top_left = QPoint(min_x, max_y)
-            top_right = QPoint(max_x, max_y)
+            bottom_left = QPointF(min_x, min_y)  # type: QPointF
+            bottom_right = QPointF(max_x, min_y)
+            top_left = QPointF(min_x, max_y)
+            top_right = QPointF(max_x, max_y)
 
             _coordinates = [bottom_left, bottom_right, top_right, top_left]
 
@@ -833,16 +896,18 @@ class DrawingApp(QMainWindow):
 
         return closestPoint, closestIndex
 
-    def findClosestObject(self, _point: QPoint) -> DrawingObject:
+    def findClosestObject(self, _point: QPointF) -> DrawingObject:
         """
         マウスポイントから最も近い位置にあるDrawingObjectクラスのインスタンスを返す.
+        絶対座標を前提とする.
 
-        :param _point:
+        :param _point: 絶対座標系のQPoint.
         :return: _pointに最も近いDrawingObjectクラスのインスタンス.
         """
 
-        # 検索対象のオブジェクトの辞書型を指定できるようにしても良い.
+        window_size = self.size()
 
+        # 検索対象のオブジェクトの辞書型を指定できるようにしても良い.
         for d in [self.linesDict, self.rectAngleDict, self.polyLinesDict]:
 
             # マウスポインタの座標が既に描画された線や矩形の近くである場合
@@ -851,7 +916,7 @@ class DrawingApp(QMainWindow):
                 # value: DrawingObject class instance.
 
                 # ShapelyのLineStringに変換
-                each_linestring = self.point2linestring(_obj=v)
+                each_linestring = self.point2linestring(_obj=v, window_size=window_size)
 
                 # marginを追加
                 each_linestring_margin = each_linestring.buffer(MARGIN)
@@ -867,7 +932,7 @@ class DrawingApp(QMainWindow):
         """
         QPoint型の2点から成る矩形の中に含まれるDrawingObject型変数を探す.
 
-        :param point_list:
+        :param point_list: 矩形を定義する2点のQPoint型変数. 絶対座標系.
         :return: 描画した矩形の領域内に含まれるDrawingObjectクラスを要素とした配列.
         """
         # 範囲選択した矩形をQRect型で定義.
@@ -875,6 +940,9 @@ class DrawingApp(QMainWindow):
 
         # 矩形内に含まれるDrawingObject型変数を格納するリスト
         inside_list = []
+
+        # 現在の画面のサイズ.
+        window_size = self.size()
 
         # 線やポリラインの場合,
         for d in [self.linesDict, self.polyLinesDict]:
@@ -884,11 +952,16 @@ class DrawingApp(QMainWindow):
 
                 isinsideflag = False
 
-                # 各座標点ごとに,
-                for _p in each_object.coordinates:
+                # 各相対座標点ごとに,
+                for relative_p in each_object.coordinates:
+
+                    # QRect.contains()はintしかダメなので, QPointを使う.
+                    abs_p = QPoint(int(relative_p.x()*window_size.width()),
+                                   int(relative_p.y()*window_size.height()),
+                                   )
 
                     # 点が矩形に含まれれば
-                    if rect.contains(_p):
+                    if rect.contains(abs_p):
 
                         # フラグを立てる.
                         isinsideflag = True
@@ -903,7 +976,9 @@ class DrawingApp(QMainWindow):
         for each_object in self.rectAngleDict.values():
 
             # QRectを作り,
-            target_rect = QRect(each_object.coordinates[0], each_object.coordinates[1])
+            target_rect = QRect(self.get_actual_coordinate(each_object.coordinates[0], window_size),
+                                self.get_actual_coordinate(each_object.coordinates[1], window_size),
+                                )
 
             # 範囲選択した領域に矩形の各頂点が含まれるか確認し,
             check_tr = rect.contains(target_rect.topRight())
@@ -958,6 +1033,8 @@ class DrawingApp(QMainWindow):
             resetColor()
             # 選択したオブジェクトを解除する.
             self.selected_object = []
+            self.range_coordinates = []
+            self.update()
 
     # def updateListWidgetGeometry(self) -> None:
     #     """
@@ -970,11 +1047,45 @@ class DrawingApp(QMainWindow):
     #     y = 0  # ウィンドウの上端から始める
     #     self.objectListWidget.setGeometry(x, y, width, height)
 
-    @staticmethod
-    def point2linestring(_obj: DrawingObject) -> LineString:
+    def get_relative_coordinate(self, abs_coord: QPointF):
+        """
+        インポートした画面サイズに対する座標の相対座標を算出する関数.
+
+        :param abs_coord:
+        :return:
+        """
+        relative_coord_width = abs_coord.x() / self.size().width()
+        relative_coord_height = abs_coord.y() / self.size().height()
+        return QPointF(relative_coord_width, relative_coord_height)
+
+    def get_actual_coordinate(self, relative_coord: QPointF,
+                              window_size: QSize = None,
+                              isReturnInt: bool = True
+                              ) -> QPointF:
+        """
+        画面サイズに対する絶対座標を算出する関数.
+
+        :param relative_coord: 絶対座標に変換したいQPoint座標.
+        :param window_size: window size.
+        :param isReturnInt: QPoint型で返すかどうか.
+        :return:
+        """
+        window_size = self.size() if window_size is None else window_size
+        actual_coord_width = relative_coord.x() * window_size.width()
+        actual_coord_height = relative_coord.y() * window_size.height()
+        print(f"width: {actual_coord_width}")
+        print(f"height: {actual_coord_height}")
+        if isReturnInt:
+            return QPoint(int(actual_coord_width), int(actual_coord_height))
+        else:
+            return QPointF(actual_coord_width, actual_coord_height)
+
+    def point2linestring(self, _obj: DrawingObject,
+                         window_size: QSize = None) -> LineString:
         """
         QPoint型のPoint情報を使って、LineString型変数を返す関数.
         :param _obj: DrawingObjectクラス変数
+        :param window_size: 絶対座標に戻すために必要なwindow_size.
         :return:
         """
 
@@ -983,6 +1094,9 @@ class DrawingApp(QMainWindow):
 
             p1 = _obj.coordinates[0]
             p2 = _obj.coordinates[1]
+
+            p1 = self.get_actual_coordinate(p1, window_size)
+            p2 = self.get_actual_coordinate(p2, window_size)
 
             # x座標とy座標の最小値と最大値を計算
             min_x = min(p1.x(), p2.x())
@@ -1000,10 +1114,16 @@ class DrawingApp(QMainWindow):
             linestring_ary = [bottom_left, bottom_right, top_right, top_left, bottom_left]
 
         elif _obj.object_type == "Line":
-            linestring_ary = [(x.x(), x.y()) for x in _obj.coordinates]
+            linestring_ary = []
+            for x in _obj.coordinates:
+                act_coordinate = self.get_actual_coordinate(x, window_size)
+                linestring_ary.append((act_coordinate.x(), act_coordinate.y()))
 
         elif _obj.object_type == "PolyLine":
-            linestring_ary = [(x.x(), x.y()) for x in _obj.coordinates]
+            linestring_ary = []
+            for x in _obj.coordinates:
+                act_coordinate = self.get_actual_coordinate(x, window_size)
+                linestring_ary.append((act_coordinate.x(), act_coordinate.y()))
 
         else:
             assert f"invalid object_type: {_obj.object_type}"
